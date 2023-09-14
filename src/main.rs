@@ -2,9 +2,10 @@ use std::{collections::HashMap, num::NonZeroU32};
 
 use simple_logger::SimpleLogger;
 use winit::{
+    dpi::LogicalPosition,
     event::{ElementState, Event, MouseButton, WindowEvent},
     event_loop::EventLoop,
-    window::WindowBuilder,
+    window::{self, Window, WindowBuilder},
 };
 
 fn main() {
@@ -13,18 +14,19 @@ fn main() {
     let event_loop = EventLoop::new();
 
     let window = WindowBuilder::new()
-        .with_title("tterm")
+        .with_title("Simulation")
         .build(&event_loop)
         .unwrap();
 
     let context = unsafe { softbuffer::Context::new(&window) }.unwrap();
     let mut surface = unsafe { softbuffer::Surface::new(&context, &window) }.unwrap();
 
-    let mut cursor_position = 0;
+    let mut cursor_position = LogicalPosition::<i32>::new(0, 0);
+    let mut add_new_entity = false;
 
     event_loop.run(move |event, _, control_flow| {
         // Run loop only when there are events happening
-        control_flow.set_wait();
+        control_flow.set_poll();
 
         match event {
             Event::WindowEvent { event, window_id } if window_id == window.id() => match event {
@@ -32,9 +34,16 @@ fn main() {
                 WindowEvent::MouseInput {
                     state: ElementState::Pressed,
                     button: MouseButton::Left,
-                    device_id: _,
-                    modifiers: _,
-                } => handle_mouse(cursor_position),
+                    ..
+                } => {
+                    add_new_entity = true;
+                    window.request_redraw();
+                }
+                WindowEvent::CursorMoved { position, .. } => {
+                    let pos = position.to_logical(1.0);
+                    cursor_position.x = pos.x;
+                    cursor_position.y = pos.y;
+                }
                 _ => {}
             },
 
@@ -56,13 +65,17 @@ fn main() {
 
                 buffer.fill(0x00181818);
 
+                if add_new_entity {
+                    //calculate pixel the cursor is on
+                    let pixel = window.inner_size().width * cursor_position.y as u32
+                        + cursor_position.x as u32;
+
+                    buffer[pixel as usize] = u32::MAX;
+                }
+
                 buffer.present().unwrap();
             }
             _ => (),
         };
     })
-}
-
-fn handle_mouse(cursor_position: u32) {
-    println!("handling mouse")
 }
