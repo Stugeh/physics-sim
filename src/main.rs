@@ -2,7 +2,6 @@ use simple_logger::SimpleLogger;
 use std::{
     num::NonZeroU32,
     sync::{Arc, Mutex},
-    thread,
     time::Duration,
 };
 use winit::{
@@ -36,24 +35,12 @@ fn main() {
 
     let physics_objects: Arc<Mutex<Vec<Arc<Mutex<PhysicsItem>>>>> = Arc::new(Mutex::new(vec![]));
 
-    let thread_physics_objects = physics_objects.clone();
-
+    // let thread_physics_objects = physics_objects;
     // Physics update thread
-    thread::spawn(move || loop {
-        let thread_physics_objects = thread_physics_objects.lock().unwrap();
-
-        for object in thread_physics_objects.iter() {
-            let mut object = object.lock().unwrap();
-            object.y -= object.velocity_vector.velocity as i32;
-            object.velocity_vector.velocity += PHYSICS.gravity_vector.velocity;
-        }
-
-        thread::sleep(PHYSICS.update_cycle);
-    });
+    // thread::spawn(|| loop {});
 
     event_loop.run(move |event, _, control_flow| {
-        // Run loop only when there are events happening
-        control_flow.set_wait();
+        control_flow.set_poll();
 
         match event {
             Event::WindowEvent { event, window_id } if window_id == window.id() => match event {
@@ -64,7 +51,8 @@ fn main() {
                     ..
                 } => {
                     let mut physics_objects = physics_objects.lock().unwrap();
-                    physics_objects.push(Arc::new(Mutex::new(PhysicsItem {
+
+                    let new_object = Arc::new(Mutex::new(PhysicsItem {
                         velocity_vector: VelocityVector {
                             direction: 0,
                             velocity: 0,
@@ -73,9 +61,12 @@ fn main() {
                         x: cursor_position.x,
                         y: cursor_position.y,
                         mass: 10,
-                    })));
+                    }));
+                    physics_objects.push(new_object);
+
                     window.request_redraw();
                 }
+
                 WindowEvent::CursorMoved { position, .. } => {
                     let pos = position.to_logical(1.0);
                     cursor_position.x = pos.x;
@@ -100,15 +91,37 @@ fn main() {
 
                 buffer.fill(0x00181818);
 
-                physics_objects.lock().unwrap().iter().for_each(|object| {
-                    let object = object.lock().unwrap();
-                    buffer[object.y as usize * width as usize + object.x as usize] = u32::MAX
-                });
+                let physics_objects = physics_objects.lock().unwrap();
+                for (index, object) in physics_objects.iter().enumerate() {
+                    let mut object = object.lock().unwrap();
+                    object.velocity_vector.velocity = 7;
+                    object.y += object.velocity_vector.velocity as i32;
+
+                    let buffer_index = object.y as usize * width as usize + object.x as usize;
+                    let mut indeces = vec![buffer_index];
+                    for i in 1..5 {
+                        indeces.push(buffer_index + i);
+                        indeces.push(buffer_index + i * width as usize);
+                        for j in 1..5 {
+                            indeces.push(buffer_index + i * width as usize + j);
+                        }
+                    }
+
+                    if *indeces.last().unwrap() < buffer.len() {
+                        for index in indeces {
+                            buffer[index] = u32::MAX
+                        }
+                    } else {
+                        physics_objects.clone().remove(index);
+                    }
+                }
 
                 buffer.present().unwrap();
             }
             _ => (),
         };
+
+        window.request_redraw();
     })
 }
 
