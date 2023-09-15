@@ -1,6 +1,10 @@
 use simple_logger::SimpleLogger;
-use std::{num::NonZeroU32, sync::mpsc, thread, time::Duration};
-use uuid::Uuid;
+use std::{
+    num::NonZeroU32,
+    sync::{Arc, Mutex},
+    thread,
+    time::Duration,
+};
 use winit::{
     dpi::LogicalPosition,
     event::{ElementState, Event, MouseButton, WindowEvent},
@@ -10,9 +14,12 @@ use winit::{
 
 fn main() {
     SimpleLogger::new().init().unwrap();
-    const _PHYSICS: PhysicsConsts = PhysicsConsts {
-        gravity: 1,
-        update_cycle: Duration::from_millis(10),
+    const PHYSICS: PhysicsConsts = PhysicsConsts {
+        gravity_vector: VelocityVector {
+            velocity: 10,
+            direction: 270,
+        },
+        update_cycle: Duration::from_millis(15),
     };
 
     let event_loop = EventLoop::new();
@@ -27,22 +34,22 @@ fn main() {
 
     let mut cursor_position = LogicalPosition::<i32>::new(0, 0);
 
-    // let (tx, _rx) = mpsc::channel();
-    let mut physics_objects: Vec<PhysicsItem> = vec![];
-    // let mut handles = vec![];
+    let physics_objects: Arc<Mutex<Vec<Arc<Mutex<PhysicsItem>>>>> = Arc::new(Mutex::new(vec![]));
+
+    let thread_physics_objects = physics_objects.clone();
 
     // Physics update thread
-    // for object in physics_objects {
-    //     let handle = thread::spawn(move || loop {
-    //         tx.send((
-    //             270,
-    //             object.velocity_vector.velocity + PHYSICS.gravity,
-    //             object.velocity_vector.velocity,
-    //         ));
-    //     });
-    //     handles.push(handle);
-    //     thread::sleep(PHYSICS.update_cycle);
-    // }
+    thread::spawn(move || loop {
+        let thread_physics_objects = thread_physics_objects.lock().unwrap();
+
+        for object in thread_physics_objects.iter() {
+            let mut object = object.lock().unwrap();
+            object.y -= object.velocity_vector.velocity as i32;
+            object.velocity_vector.velocity += PHYSICS.gravity_vector.velocity;
+        }
+
+        thread::sleep(PHYSICS.update_cycle);
+    });
 
     event_loop.run(move |event, _, control_flow| {
         // Run loop only when there are events happening
@@ -56,8 +63,8 @@ fn main() {
                     button: MouseButton::Left,
                     ..
                 } => {
-                    physics_objects.push(PhysicsItem {
-                        item_id: Uuid::new_v4(),
+                    let mut physics_objects = physics_objects.lock().unwrap();
+                    physics_objects.push(Arc::new(Mutex::new(PhysicsItem {
                         velocity_vector: VelocityVector {
                             direction: 0,
                             velocity: 0,
@@ -66,7 +73,7 @@ fn main() {
                         x: cursor_position.x,
                         y: cursor_position.y,
                         mass: 10,
-                    });
+                    })));
                     window.request_redraw();
                 }
                 WindowEvent::CursorMoved { position, .. } => {
@@ -93,8 +100,9 @@ fn main() {
 
                 buffer.fill(0x00181818);
 
-                physics_objects.iter().for_each(|item| {
-                    buffer[item.y as usize * width as usize + item.x as usize] = u32::MAX
+                physics_objects.lock().unwrap().iter().for_each(|object| {
+                    let object = object.lock().unwrap();
+                    buffer[object.y as usize * width as usize + object.x as usize] = u32::MAX
                 });
 
                 buffer.present().unwrap();
@@ -105,7 +113,6 @@ fn main() {
 }
 
 struct PhysicsItem {
-    item_id: Uuid,
     velocity_vector: VelocityVector,
     has_gravity: bool,
     y: i32,
@@ -114,11 +121,14 @@ struct PhysicsItem {
 }
 
 struct PhysicsConsts {
-    gravity: u8,
+    gravity_vector: VelocityVector,
     update_cycle: Duration,
 }
 
 struct VelocityVector {
     direction: u16,
     velocity: u8,
+}
+enum PhysicsEvent {
+    Gravity,
 }
