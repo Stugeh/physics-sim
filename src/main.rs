@@ -2,6 +2,7 @@ use simple_logger::SimpleLogger;
 use std::{
     num::NonZeroU32,
     sync::{Arc, Mutex},
+    thread,
     time::Duration,
 };
 use winit::{
@@ -35,12 +36,21 @@ fn main() {
 
     let physics_objects: Arc<Mutex<Vec<Arc<Mutex<PhysicsItem>>>>> = Arc::new(Mutex::new(vec![]));
 
-    // let thread_physics_objects = physics_objects;
     // Physics update thread
-    // thread::spawn(|| loop {});
+    // let thread_physics_objects = physics_objects.clone();
+    // thread::spawn(move || loop {
+    //     println!("thread");
+    //     let physics_objects = thread_physics_objects.lock().unwrap();
+    //     if let Some(object) = physics_objects.last() {
+    //         let mut object = object.lock().unwrap();
+    //         object.y -= 50;
+    //     }
+    //     thread::sleep(Duration::from_millis(100));
+    // });
 
     event_loop.run(move |event, _, control_flow| {
         control_flow.set_poll();
+        println!("loop");
 
         match event {
             Event::WindowEvent { event, window_id } if window_id == window.id() => match event {
@@ -57,6 +67,7 @@ fn main() {
                             direction: 0,
                             velocity: 0,
                         },
+                        squishiness: 0,
                         has_gravity: true,
                         x: cursor_position.x,
                         y: cursor_position.y,
@@ -127,6 +138,7 @@ fn main() {
 
 struct PhysicsItem {
     velocity_vector: VelocityVector,
+    squishiness: u8,
     has_gravity: bool,
     y: i32,
     x: i32,
