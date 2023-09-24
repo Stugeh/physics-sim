@@ -61,13 +61,25 @@ pub fn start_physics_thread(
                 current_obj.y += current_obj.vy;
                 current_obj.vy += CONSTS.gravity;
 
-                // Check for collision
                 let mut new_position = (current_obj.x, current_obj.y);
+                // Check for collision and try to move left or right if necessary
                 while occupied_positions.contains(&new_position) {
-                    new_position.1 -= 1
+                    // Try moving left
+                    if !occupied_positions.contains(&(new_position.0 - 1, new_position.1)) {
+                        new_position.0 -= 1;
+                    }
+                    // Try moving right
+                    else if !occupied_positions.contains(&(new_position.0 + 1, new_position.1)) {
+                        new_position.0 += 1;
+                    } else {
+                        // No available move, move upwards
+                        new_position.1 -= 1;
+                    }
                 }
+                current_obj.x = new_position.0;
                 current_obj.y = new_position.1;
 
+                occupied_positions.insert(new_position);
                 continue;
             }
 
@@ -75,10 +87,27 @@ pub fn start_physics_thread(
             current_obj.y = (window_dim_reader.height - 5) as i32;
 
             let mut new_position = (current_obj.x, current_obj.y);
+
+            // Check for collision and try to move left or right if necessary
             while occupied_positions.contains(&new_position) {
-                new_position.1 -= 1
+                // Try moving left
+                if !occupied_positions.contains(&(new_position.0 - 1, new_position.1)) {
+                    new_position.0 -= 1;
+                }
+                // Try moving right
+                else if !occupied_positions.contains(&(new_position.0 + 1, new_position.1)) {
+                    new_position.0 += 1;
+                } else {
+                    // No available move, move upwards
+                    new_position.1 -= 1;
+                }
             }
+
+            // Update the object's position after collision resolution
+            current_obj.x = new_position.0;
             current_obj.y = new_position.1;
+
+            // Insert the new position into the HashSet
             occupied_positions.insert(new_position);
         }
 
