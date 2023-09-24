@@ -1,7 +1,7 @@
 use simple_logger::SimpleLogger;
 use std::{
     num::NonZeroU32,
-    sync::{Arc, Mutex},
+    sync::{Arc, RwLock},
     thread,
     time::Duration,
 };
@@ -9,16 +9,13 @@ use winit::{
     dpi::LogicalPosition,
     event::{ElementState, Event, MouseButton, WindowEvent},
     event_loop::EventLoop,
-    window::WindowBuilder,
+    window::{self, WindowBuilder},
 };
 
 fn main() {
     SimpleLogger::new().init().unwrap();
     const PHYSICS: PhysicsConsts = PhysicsConsts {
-        gravity_vector: VelocityVector {
-            velocity: 10,
-            direction: 270,
-        },
+        gravity: 1,
         update_cycle: Duration::from_millis(15),
     };
 
@@ -34,7 +31,21 @@ fn main() {
 
     let mut cursor_position = LogicalPosition::<i32>::new(0, 0);
 
-    let physics_objects: Arc<Mutex<Vec<Arc<Mutex<PhysicsItem>>>>> = Arc::new(Mutex::new(vec![]));
+    let physics_objects: Arc<RwLock<Vec<Arc<RwLock<PhysicsItem>>>>> = Arc::new(RwLock::new(vec![]));
+
+    let the_matrix = create_arc_vec(None);
+
+    let matrix_width = window.inner_size().width;
+    let matrix_height = window.inner_size().height;
+
+    (0..matrix_height).for_each(|_| {
+        the_matrix
+            .write()
+            .unwrap()
+            .push(create_empty_arc_vec_with_cap::<PhysicsItem>(
+                matrix_width as usize,
+            ))
+    });
 
     // Physics update thread
     // let thread_physics_objects = physics_objects.clone();
@@ -60,17 +71,13 @@ fn main() {
                     button: MouseButton::Left,
                     ..
                 } => {
-                    let mut physics_objects = physics_objects.lock().unwrap();
+                    let mut physics_objects = physics_objects.write().unwrap();
 
-                    let new_object = Arc::new(Mutex::new(PhysicsItem {
-                        velocity_vector: VelocityVector {
-                            direction: 0,
-                            velocity: 0,
-                        },
-                        squishiness: 0,
-                        has_gravity: true,
+                    let new_object = Arc::new(RwLock::new(PhysicsItem {
                         x: cursor_position.x,
+                        vx: 0,
                         y: cursor_position.y,
+                        vy: 0,
                         mass: 10,
                     }));
                     physics_objects.push(new_object);
@@ -102,11 +109,10 @@ fn main() {
 
                 buffer.fill(0x00181818);
 
-                let physics_objects = physics_objects.lock().unwrap();
+                let physics_objects = physics_objects.read().unwrap();
                 for (index, object) in physics_objects.iter().enumerate() {
-                    let mut object = object.lock().unwrap();
-                    object.velocity_vector.velocity = 7;
-                    object.y += object.velocity_vector.velocity as i32;
+                    let mut object = object.write().unwrap();
+                    object.vy += PHYSICS.gravity;
 
                     let buffer_index = object.y as usize * width as usize + object.x as usize;
                     let mut indeces = vec![buffer_index];
@@ -136,24 +142,33 @@ fn main() {
     })
 }
 
+fn create_arc_vec<T>(input_data: Option<T>) -> Arc<RwLock<Vec<T>>> {
+    let vec = match input_data {
+        Some(data) => vec![data],
+        None => vec![],
+    };
+
+    Arc::new(RwLock::new(vec))
+}
+
+fn create_empty_arc_vec_with_cap<T>(cap: usize) -> Arc<RwLock<Vec<T>>> {
+    let vec = Vec::with_capacity(cap);
+    Arc::new(RwLock::new(vec))
+}
+
 struct PhysicsItem {
-    velocity_vector: VelocityVector,
-    squishiness: u8,
-    has_gravity: bool,
-    y: i32,
     x: i32,
+    vx: i32,
+    y: i32,
+    vy: i32,
     mass: u8,
 }
 
 struct PhysicsConsts {
-    gravity_vector: VelocityVector,
+    gravity: i32,
     update_cycle: Duration,
 }
 
-struct VelocityVector {
-    direction: u16,
-    velocity: u8,
-}
 enum PhysicsEvent {
     Gravity,
 }
