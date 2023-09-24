@@ -1,3 +1,4 @@
+use crate::{WindowDimensions, CONSTS};
 use std::{
     collections::HashSet,
     sync::{
@@ -7,8 +8,16 @@ use std::{
     thread,
 };
 
-use crate::{WindowDimensions, CONSTS};
 pub type ArcLockPhysxItem = Arc<RwLock<PhysicsItem>>;
+
+pub struct PhysicsItem {
+    pub x: i32,
+    pub vx: i32,
+    pub y: i32,
+    pub vy: i32,
+    pub color: u32,
+    // mass: u8,
+}
 
 pub fn start_physics_thread(
     window_dim_reader: Arc<RwLock<WindowDimensions>>,
@@ -79,13 +88,4 @@ pub fn start_physics_thread(
             .send(true)
             .expect("Failed to ask for redraw");
     });
-}
-
-pub struct PhysicsItem {
-    pub x: i32,
-    pub vx: i32,
-    pub y: i32,
-    pub vy: i32,
-    pub color: u32,
-    // mass: u8,
 }

@@ -1,6 +1,6 @@
 mod physics;
 
-use physics::{start_physics_thread, PhysicsItem};
+use physics::{start_physics_thread, ArcLockPhysxItem, PhysicsItem};
 use rand::Rng;
 use simple_logger::SimpleLogger;
 use std::{
@@ -18,9 +18,19 @@ use winit::{
     window::WindowBuilder,
 };
 
-type ArcLockPhysxItem = Arc<RwLock<PhysicsItem>>;
+pub struct WindowDimensions {
+    width: u32,
+    height: u32,
+}
+
+pub struct PhysicsConsts {
+    pub sand_colors: [u32; 3],
+    pub gravity: i32,
+    pub update_cycle: Duration,
+}
 
 pub const CONSTS: PhysicsConsts = PhysicsConsts {
+    // Color format: 0000 0000 RRRR RRRR GGGG GGGG BBBB BBBB
     sand_colors: [
         0b00000000_11000010_10110010_10000000,
         0b00000000_11010010_10101010_01101101,
@@ -32,8 +42,6 @@ pub const CONSTS: PhysicsConsts = PhysicsConsts {
 
 fn main() {
     SimpleLogger::new().init().unwrap();
-
-    // Color format: 0000 0000 RRRR RRRR GGGG GGGG BBBB BBBB
 
     // Init winit
     let event_loop = EventLoop::new();
@@ -52,17 +60,19 @@ fn main() {
     let physics_objects: Vec<ArcLockPhysxItem> = vec![];
     let physics_objects = Arc::new(RwLock::new(physics_objects));
 
+    // Channel for sending and receiving new physics objects created on click events
     let (new_object_sender, new_object_receiver): (
         Sender<ArcLockPhysxItem>,
         Receiver<ArcLockPhysxItem>,
     ) = channel();
+
+    // Channel for physics loop to signal to the window to redraw the display buffer
     let (redraw_sender, redraw_receiver) = channel();
 
     let window_dimensions = Arc::new(RwLock::new(WindowDimensions {
         width: window.inner_size().width,
         height: window.inner_size().height,
     }));
-
     let window_dim_writer = Arc::clone(&window_dimensions);
     let window_dim_reader = Arc::clone(&window_dimensions);
 
@@ -149,15 +159,4 @@ fn main() {
             _ => (),
         };
     })
-}
-
-pub struct WindowDimensions {
-    width: u32,
-    height: u32,
-}
-
-pub struct PhysicsConsts {
-    pub sand_colors: [u32; 3],
-    pub gravity: i32,
-    pub update_cycle: Duration,
 }
