@@ -1,6 +1,7 @@
 use rand::Rng;
 use simple_logger::SimpleLogger;
 use std::{
+    collections::{HashMap, HashSet},
     num::NonZeroU32,
     sync::{
         mpsc::{channel, Receiver, Sender},
@@ -29,7 +30,7 @@ fn main() {
             0b00000000_11010010_10110111_01101001,
         ],
         gravity: 1,
-        update_cycle: Duration::from_millis(20),
+        update_cycle: Duration::from_millis(50),
     };
 
     // Init winit
@@ -58,6 +59,14 @@ fn main() {
     ) = channel();
     let (redraw_sender, redraw_receiver) = channel();
 
+    let window_dimensions = Arc::new(RwLock::new(WindowDimensions {
+        width: window.inner_size().width,
+        height: window.inner_size().height,
+    }));
+
+    let window_dim_writer = Arc::clone(&window_dimensions);
+    let window_dim_reader = Arc::clone(&window_dimensions);
+
     // Thread where all updates to the physics objects vector should be handled
     // let physics_object_writer = physics_objects.write().unwrap();
     thread::spawn(move || loop {
@@ -65,30 +74,56 @@ fn main() {
         let mut physics_object_writer = physics_objects_writer.write().unwrap();
 
         for new_object in new_object_receiver.try_iter() {
-            println!("{}", physics_object_writer.len());
             physics_object_writer.push(new_object);
         }
 
         // We need to update item positions from the bottom up so we need to keep the array of
-        // PhysicsItems sorted by their y coordinate. Insertion sort is fast on partially sorted
+        // PhysicsItems sorted by their coordinates. Insertion sort is fast on partially sorted
         // Vecs.
         for i in 1..physics_object_writer.len() {
             let mut j = i;
             while j > 0
                 && physics_object_writer[j].read().unwrap().y
-                    < physics_object_writer[j - 1].read().unwrap().y
+                    > physics_object_writer[j - 1].read().unwrap().y
+                && physics_object_writer[j].read().unwrap().x
+                    > physics_object_writer[j - 1].read().unwrap().x
             {
                 physics_object_writer.swap(j, j - 1);
                 j -= 1;
             }
         }
 
+        let window_dim_reader = window_dim_reader.read().unwrap();
+
+        let mut occupied_positions = HashSet::new();
         // update position and velocity of each object
-        for object in physics_object_writer.iter().rev() {
+        for object in physics_object_writer.iter() {
             let mut current_obj = object.write().unwrap();
-            current_obj.y += current_obj.vy;
-            current_obj.vy += CONSTS.gravity;
+
+            // If object hasnt reached the bottom of the screen update y and apply gravity
+            if current_obj.y + current_obj.vy < window_dim_reader.height as i32 {
+                current_obj.y += current_obj.vy;
+                current_obj.vy += CONSTS.gravity;
+
+                // Check for collision
+                let mut new_position = (current_obj.x, current_obj.y);
+                while occupied_positions.contains(&new_position) {
+                    new_position.1 -= 1
+                }
+                current_obj.y = new_position.1;
+
+                continue;
+            }
+
             current_obj.x += current_obj.vx;
+            current_obj.y = (window_dim_reader.height - 5) as i32;
+
+            let mut new_position = (current_obj.x, current_obj.y);
+            while occupied_positions.contains(&new_position) {
+                new_position.1 -= 1
+            }
+            current_obj.y = new_position.1;
+            occupied_positions.insert(new_position);
         }
 
         // send redraw request
@@ -141,15 +176,14 @@ fn main() {
             },
 
             Event::RedrawRequested(_) => {
-                let (window_width, window_height) = {
-                    let size = window.inner_size();
-                    (size.width, size.height)
-                };
+                let mut window_dim_writer = window_dim_writer.write().unwrap();
+                window_dim_writer.height = window.inner_size().height;
+                window_dim_writer.width = window.inner_size().width;
 
                 surface
                     .resize(
-                        NonZeroU32::new(window_width).unwrap(),
-                        NonZeroU32::new(window_height).unwrap(),
+                        NonZeroU32::new(window_dim_writer.width).unwrap(),
+                        NonZeroU32::new(window_dim_writer.height).unwrap(),
                     )
                     .unwrap();
 
@@ -162,7 +196,9 @@ fn main() {
                 for object in physx_object_reader.iter() {
                     let obj = object.read().unwrap();
 
-                    let index = obj.x as usize + obj.y as usize * window_width as usize;
+                    println!("{}", obj.y);
+
+                    let index = obj.x as usize + obj.y as usize * window_dim_writer.width as usize;
 
                     if index < buffer.len() {
                         buffer[index] = obj.color;
@@ -183,6 +219,10 @@ struct PhysicsItem {
     vy: i32,
     color: u32,
     mass: u8,
+}
+struct WindowDimensions {
+    width: u32,
+    height: u32,
 }
 
 struct PhysicsConsts {
