@@ -2,7 +2,10 @@ use rand::Rng;
 use simple_logger::SimpleLogger;
 use std::{
     num::NonZeroU32,
-    sync::{mpsc::channel, Arc, RwLock},
+    sync::{
+        mpsc::{channel, Receiver, Sender},
+        Arc, RwLock,
+    },
     thread,
     time::Duration,
 };
@@ -12,6 +15,8 @@ use winit::{
     event_loop::EventLoop,
     window::WindowBuilder,
 };
+
+type ArcLockPhysxItem = Arc<RwLock<PhysicsItem>>;
 
 fn main() {
     SimpleLogger::new().init().unwrap();
@@ -24,7 +29,7 @@ fn main() {
             0b00000000_11010010_10110111_01101001,
         ],
         gravity: 1,
-        update_cycle: Duration::from_millis(100),
+        update_cycle: Duration::from_millis(20),
     };
 
     // Init winit
@@ -41,54 +46,62 @@ fn main() {
     let mut cursor_position = LogicalPosition::<i32>::new(0, 0);
 
     // init physics_objects vector
-    let physics_objects: Vec<Arc<RwLock<PhysicsItem>>> = vec![];
+    let physics_objects: Vec<ArcLockPhysxItem> = vec![];
     let physics_objects = Arc::new(RwLock::new(physics_objects));
 
-    let (new_object_sender, new_object_receiver) = std::sync::mpsc::channel();
-    let (redraw_sender, redraw_receiver) = std::sync::mpsc::channel();
+    let physics_objects_writer = Arc::clone(&physics_objects);
+    let physics_objects_reader = Arc::clone(&physics_objects);
+
+    let (new_object_sender, new_object_receiver): (
+        Sender<ArcLockPhysxItem>,
+        Receiver<ArcLockPhysxItem>,
+    ) = channel();
+    let (redraw_sender, redraw_receiver) = channel();
 
     // Thread where all updates to the physics objects vector should be handled
-    let mut thread_physics_objects = physics_objects.clone().write().unwrap().clone();
+    // let physics_object_writer = physics_objects.write().unwrap();
     thread::spawn(move || loop {
         thread::sleep(CONSTS.update_cycle);
+        let mut physics_object_writer = physics_objects_writer.write().unwrap();
 
         for new_object in new_object_receiver.try_iter() {
-            thread_physics_objects.push(new_object);
+            println!("{}", physics_object_writer.len());
+            physics_object_writer.push(new_object);
         }
 
         // We need to update item positions from the bottom up so we need to keep the array of
         // PhysicsItems sorted by their y coordinate. Insertion sort is fast on partially sorted
         // Vecs.
-        for i in 1..thread_physics_objects.len() {
+        for i in 1..physics_object_writer.len() {
             let mut j = i;
             while j > 0
-                && thread_physics_objects[j].read().unwrap().y
-                    < thread_physics_objects[j - 1].read().unwrap().y
+                && physics_object_writer[j].read().unwrap().y
+                    < physics_object_writer[j - 1].read().unwrap().y
             {
-                thread_physics_objects.swap(j, j - 1);
+                physics_object_writer.swap(j, j - 1);
                 j -= 1;
             }
         }
 
         // update position and velocity of each object
-        for object in thread_physics_objects.iter().rev() {
+        for object in physics_object_writer.iter().rev() {
             let mut current_obj = object.write().unwrap();
             current_obj.y += current_obj.vy;
             current_obj.vy += CONSTS.gravity;
             current_obj.x += current_obj.vx;
         }
 
+        // send redraw request
         redraw_sender
             .clone()
             .send(true)
             .expect("Failed to ask for redraw");
     });
 
-    let physx_object_reader = physics_objects.read().unwrap().clone();
-
     event_loop.run(move |event, _, control_flow| {
         control_flow.set_poll();
 
+        // If the physics loop has requested for a redraw, redraw
         if let Ok(request) = redraw_receiver.try_recv() {
             if request {
                 window.request_redraw();
@@ -144,13 +157,15 @@ fn main() {
 
                 buffer.fill(0x00181818);
 
+                let physx_object_reader = physics_objects_reader.read().unwrap();
+
                 for object in physx_object_reader.iter() {
                     let obj = object.read().unwrap();
 
                     let index = obj.x as usize + obj.y as usize * window_width as usize;
 
                     if index < buffer.len() {
-                        buffer[index] = object.read().unwrap().color;
+                        buffer[index] = obj.color;
                     }
                 }
 
