@@ -1,13 +1,14 @@
+mod physics;
+
+use physics::{start_physics_thread, PhysicsItem};
 use rand::Rng;
 use simple_logger::SimpleLogger;
 use std::{
-    collections::HashSet,
     num::NonZeroU32,
     sync::{
         mpsc::{channel, Receiver, Sender},
         Arc, RwLock,
     },
-    thread,
     time::Duration,
 };
 use winit::{
@@ -19,19 +20,20 @@ use winit::{
 
 type ArcLockPhysxItem = Arc<RwLock<PhysicsItem>>;
 
+pub const CONSTS: PhysicsConsts = PhysicsConsts {
+    sand_colors: [
+        0b00000000_11000010_10110010_10000000,
+        0b00000000_11010010_10101010_01101101,
+        0b00000000_11010010_10110111_01101001,
+    ],
+    gravity: 1,
+    update_cycle: Duration::from_millis(50),
+};
+
 fn main() {
     SimpleLogger::new().init().unwrap();
 
     // Color format: 0000 0000 RRRR RRRR GGGG GGGG BBBB BBBB
-    const CONSTS: PhysicsConsts = PhysicsConsts {
-        sand_colors: [
-            0b00000000_11000010_10110010_10000000,
-            0b00000000_11010010_10101010_01101101,
-            0b00000000_11010010_10110111_01101001,
-        ],
-        gravity: 1,
-        update_cycle: Duration::from_millis(50),
-    };
 
     // Init winit
     let event_loop = EventLoop::new();
@@ -50,9 +52,6 @@ fn main() {
     let physics_objects: Vec<ArcLockPhysxItem> = vec![];
     let physics_objects = Arc::new(RwLock::new(physics_objects));
 
-    let physics_objects_writer = Arc::clone(&physics_objects);
-    let physics_objects_reader = Arc::clone(&physics_objects);
-
     let (new_object_sender, new_object_receiver): (
         Sender<ArcLockPhysxItem>,
         Receiver<ArcLockPhysxItem>,
@@ -67,72 +66,14 @@ fn main() {
     let window_dim_writer = Arc::clone(&window_dimensions);
     let window_dim_reader = Arc::clone(&window_dimensions);
 
-    // Thread where all updates to the physics objects vector should be handled
-    // let physics_object_writer = physics_objects.write().unwrap();
-    thread::spawn(move || loop {
-        thread::sleep(CONSTS.update_cycle);
-        let mut physics_object_writer = physics_objects_writer.write().unwrap();
+    start_physics_thread(
+        window_dim_reader,
+        Arc::clone(&physics_objects),
+        new_object_receiver,
+        redraw_sender,
+    );
 
-        for new_object in new_object_receiver.try_iter() {
-            physics_object_writer.push(new_object);
-        }
-
-        // We need to update item positions from the bottom up so we need to keep the array of
-        // PhysicsItems sorted by their coordinates. Insertion sort is fast on partially sorted
-        // Vecs.
-        for i in 1..physics_object_writer.len() {
-            let mut j = i;
-            while j > 0
-                && physics_object_writer[j].read().unwrap().y
-                    > physics_object_writer[j - 1].read().unwrap().y
-                && physics_object_writer[j].read().unwrap().x
-                    > physics_object_writer[j - 1].read().unwrap().x
-            {
-                physics_object_writer.swap(j, j - 1);
-                j -= 1;
-            }
-        }
-
-        let window_dim_reader = window_dim_reader.read().unwrap();
-
-        let mut occupied_positions = HashSet::new();
-        // update position and velocity of each object
-        for object in physics_object_writer.iter() {
-            let mut current_obj = object.write().unwrap();
-
-            // If object hasnt reached the bottom of the screen update y and apply gravity
-            if current_obj.y + current_obj.vy < window_dim_reader.height as i32 {
-                current_obj.y += current_obj.vy;
-                current_obj.vy += CONSTS.gravity;
-
-                // Check for collision
-                let mut new_position = (current_obj.x, current_obj.y);
-                while occupied_positions.contains(&new_position) {
-                    new_position.1 -= 1
-                }
-                current_obj.y = new_position.1;
-
-                continue;
-            }
-
-            current_obj.x += current_obj.vx;
-            current_obj.y = (window_dim_reader.height - 5) as i32;
-
-            let mut new_position = (current_obj.x, current_obj.y);
-            while occupied_positions.contains(&new_position) {
-                new_position.1 -= 1
-            }
-            current_obj.y = new_position.1;
-            occupied_positions.insert(new_position);
-        }
-
-        // send redraw request
-        redraw_sender
-            .clone()
-            .send(true)
-            .expect("Failed to ask for redraw");
-    });
-
+    let physics_objects_reader = Arc::clone(&physics_objects);
     event_loop.run(move |event, _, control_flow| {
         control_flow.set_poll();
 
@@ -196,8 +137,6 @@ fn main() {
                 for object in physx_object_reader.iter() {
                     let obj = object.read().unwrap();
 
-                    println!("{}", obj.y);
-
                     let index = obj.x as usize + obj.y as usize * window_dim_writer.width as usize;
 
                     if index < buffer.len() {
@@ -212,21 +151,13 @@ fn main() {
     })
 }
 
-struct PhysicsItem {
-    x: i32,
-    vx: i32,
-    y: i32,
-    vy: i32,
-    color: u32,
-    // mass: u8,
-}
-struct WindowDimensions {
+pub struct WindowDimensions {
     width: u32,
     height: u32,
 }
 
-struct PhysicsConsts {
-    sand_colors: [u32; 3],
-    gravity: i32,
-    update_cycle: Duration,
+pub struct PhysicsConsts {
+    pub sand_colors: [u32; 3],
+    pub gravity: i32,
+    pub update_cycle: Duration,
 }
