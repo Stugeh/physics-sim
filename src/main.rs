@@ -44,14 +44,15 @@ fn main() {
     let physics_objects: Vec<Arc<RwLock<PhysicsItem>>> = vec![];
     let physics_objects = Arc::new(RwLock::new(physics_objects));
 
-    let (sender, receiver) = std::sync::mpsc::channel();
+    let (new_object_sender, new_object_receiver) = std::sync::mpsc::channel();
+    let (redraw_sender, redraw_receiver) = std::sync::mpsc::channel();
 
     // Thread where all updates to the physics objects vector should be handled
     let mut thread_physics_objects = physics_objects.clone().write().unwrap().clone();
     thread::spawn(move || loop {
         thread::sleep(CONSTS.update_cycle);
 
-        for new_object in receiver.try_iter() {
+        for new_object in new_object_receiver.try_iter() {
             thread_physics_objects.push(new_object);
         }
 
@@ -76,12 +77,23 @@ fn main() {
             current_obj.vy += CONSTS.gravity;
             current_obj.x += current_obj.vx;
         }
+
+        redraw_sender
+            .clone()
+            .send(true)
+            .expect("Failed to ask for redraw");
     });
 
     let physx_object_reader = physics_objects.read().unwrap().clone();
 
     event_loop.run(move |event, _, control_flow| {
         control_flow.set_poll();
+
+        if let Ok(request) = redraw_receiver.try_recv() {
+            if request {
+                window.request_redraw();
+            }
+        }
 
         match event {
             Event::WindowEvent { event, window_id } if window_id == window.id() => match event {
@@ -102,7 +114,7 @@ fn main() {
                         color: CONSTS.sand_colors[rng.gen_range(0..2)],
                     }));
 
-                    sender
+                    new_object_sender
                         .send(new_object)
                         .expect("this should always succeed since receiver is never killed");
                 }
@@ -146,9 +158,6 @@ fn main() {
             }
             _ => (),
         };
-
-        window.request_redraw();
-        thread::sleep(CONSTS.update_cycle);
     })
 }
 
