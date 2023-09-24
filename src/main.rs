@@ -1,7 +1,8 @@
+use rand::Rng;
 use simple_logger::SimpleLogger;
 use std::{
     num::NonZeroU32,
-    sync::{Arc, RwLock},
+    sync::{mpsc::channel, Arc, RwLock},
     thread,
     time::Duration,
 };
@@ -9,59 +10,78 @@ use winit::{
     dpi::LogicalPosition,
     event::{ElementState, Event, MouseButton, WindowEvent},
     event_loop::EventLoop,
-    window::{self, WindowBuilder},
+    window::WindowBuilder,
 };
 
 fn main() {
     SimpleLogger::new().init().unwrap();
-    const PHYSICS: PhysicsConsts = PhysicsConsts {
+
+    // Color format: 0000 0000 RRRR RRRR GGGG GGGG BBBB BBBB
+    const CONSTS: PhysicsConsts = PhysicsConsts {
+        sand_colors: [
+            0b00000000_11000010_10110010_10000000,
+            0b00000000_11010010_10101010_01101101,
+            0b00000000_11010010_10110111_01101001,
+        ],
         gravity: 1,
-        update_cycle: Duration::from_millis(15),
+        update_cycle: Duration::from_millis(100),
     };
 
+    // Init winit
     let event_loop = EventLoop::new();
-
     let window = WindowBuilder::new()
         .with_title("Simulation")
         .build(&event_loop)
         .unwrap();
 
+    // Init drawing lib
     let context = unsafe { softbuffer::Context::new(&window) }.unwrap();
     let mut surface = unsafe { softbuffer::Surface::new(&context, &window) }.unwrap();
 
     let mut cursor_position = LogicalPosition::<i32>::new(0, 0);
 
-    let physics_objects: Arc<RwLock<Vec<Arc<RwLock<PhysicsItem>>>>> = Arc::new(RwLock::new(vec![]));
+    // init physics_objects vector
+    let physics_objects: Vec<Arc<RwLock<PhysicsItem>>> = vec![];
+    let physics_objects = Arc::new(RwLock::new(physics_objects));
 
-    let the_matrix = create_arc_vec(None);
+    let (sender, receiver) = std::sync::mpsc::channel();
 
-    let matrix_width = window.inner_size().width;
-    let matrix_height = window.inner_size().height;
+    // Thread where all updates to the physics objects vector should be handled
+    let mut thread_physics_objects = physics_objects.clone().write().unwrap().clone();
+    thread::spawn(move || loop {
+        thread::sleep(CONSTS.update_cycle);
 
-    (0..matrix_height).for_each(|_| {
-        the_matrix
-            .write()
-            .unwrap()
-            .push(create_empty_arc_vec_with_cap::<PhysicsItem>(
-                matrix_width as usize,
-            ))
+        for new_object in receiver.try_iter() {
+            thread_physics_objects.push(new_object);
+        }
+
+        // We need to update item positions from the bottom up so we need to keep the array of
+        // PhysicsItems sorted by their y coordinate. Insertion sort is fast on partially sorted
+        // Vecs.
+        for i in 1..thread_physics_objects.len() {
+            let mut j = i;
+            while j > 0
+                && thread_physics_objects[j].read().unwrap().y
+                    < thread_physics_objects[j - 1].read().unwrap().y
+            {
+                thread_physics_objects.swap(j, j - 1);
+                j -= 1;
+            }
+        }
+
+        // update position and velocity of each object
+        for object in thread_physics_objects.iter().rev() {
+            let mut current_obj = object.write().unwrap();
+            current_obj.y += current_obj.vy;
+            current_obj.vy += CONSTS.gravity;
+            current_obj.x += current_obj.vx;
+        }
     });
 
-    // Physics update thread
-    // let thread_physics_objects = physics_objects.clone();
-    // thread::spawn(move || loop {
-    //     println!("thread");
-    //     let physics_objects = thread_physics_objects.lock().unwrap();
-    //     if let Some(object) = physics_objects.last() {
-    //         let mut object = object.lock().unwrap();
-    //         object.y -= 50;
-    //     }
-    //     thread::sleep(Duration::from_millis(100));
-    // });
+    let physx_object_reader = physics_objects.read().unwrap().clone();
 
     event_loop.run(move |event, _, control_flow| {
         control_flow.set_poll();
-        println!("loop");
 
         match event {
             Event::WindowEvent { event, window_id } if window_id == window.id() => match event {
@@ -71,7 +91,7 @@ fn main() {
                     button: MouseButton::Left,
                     ..
                 } => {
-                    let mut physics_objects = physics_objects.write().unwrap();
+                    let mut rng = rand::thread_rng();
 
                     let new_object = Arc::new(RwLock::new(PhysicsItem {
                         x: cursor_position.x,
@@ -79,10 +99,12 @@ fn main() {
                         y: cursor_position.y,
                         vy: 0,
                         mass: 10,
+                        color: CONSTS.sand_colors[rng.gen_range(0..2)],
                     }));
-                    physics_objects.push(new_object);
 
-                    window.request_redraw();
+                    sender
+                        .send(new_object)
+                        .expect("this should always succeed since receiver is never killed");
                 }
 
                 WindowEvent::CursorMoved { position, .. } => {
@@ -94,42 +116,29 @@ fn main() {
             },
 
             Event::RedrawRequested(_) => {
-                let (width, height) = {
+                let (window_width, window_height) = {
                     let size = window.inner_size();
                     (size.width, size.height)
                 };
 
                 surface
                     .resize(
-                        NonZeroU32::new(width).unwrap(),
-                        NonZeroU32::new(height).unwrap(),
+                        NonZeroU32::new(window_width).unwrap(),
+                        NonZeroU32::new(window_height).unwrap(),
                     )
                     .unwrap();
+
                 let mut buffer = surface.buffer_mut().unwrap();
 
                 buffer.fill(0x00181818);
 
-                let physics_objects = physics_objects.read().unwrap();
-                for (index, object) in physics_objects.iter().enumerate() {
-                    let mut object = object.write().unwrap();
-                    object.vy += PHYSICS.gravity;
+                for object in physx_object_reader.iter() {
+                    let obj = object.read().unwrap();
 
-                    let buffer_index = object.y as usize * width as usize + object.x as usize;
-                    let mut indeces = vec![buffer_index];
-                    for i in 1..5 {
-                        indeces.push(buffer_index + i);
-                        indeces.push(buffer_index + i * width as usize);
-                        for j in 1..5 {
-                            indeces.push(buffer_index + i * width as usize + j);
-                        }
-                    }
+                    let index = obj.x as usize + obj.y as usize * window_width as usize;
 
-                    if *indeces.last().unwrap() < buffer.len() {
-                        for index in indeces {
-                            buffer[index] = u32::MAX
-                        }
-                    } else {
-                        physics_objects.clone().remove(index);
+                    if index < buffer.len() {
+                        buffer[index] = object.read().unwrap().color;
                     }
                 }
 
@@ -139,21 +148,8 @@ fn main() {
         };
 
         window.request_redraw();
+        thread::sleep(CONSTS.update_cycle);
     })
-}
-
-fn create_arc_vec<T>(input_data: Option<T>) -> Arc<RwLock<Vec<T>>> {
-    let vec = match input_data {
-        Some(data) => vec![data],
-        None => vec![],
-    };
-
-    Arc::new(RwLock::new(vec))
-}
-
-fn create_empty_arc_vec_with_cap<T>(cap: usize) -> Arc<RwLock<Vec<T>>> {
-    let vec = Vec::with_capacity(cap);
-    Arc::new(RwLock::new(vec))
 }
 
 struct PhysicsItem {
@@ -161,14 +157,12 @@ struct PhysicsItem {
     vx: i32,
     y: i32,
     vy: i32,
+    color: u32,
     mass: u8,
 }
 
 struct PhysicsConsts {
+    sand_colors: [u32; 3],
     gravity: i32,
     update_cycle: Duration,
-}
-
-enum PhysicsEvent {
-    Gravity,
 }
