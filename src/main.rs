@@ -1,7 +1,7 @@
 use rand::Rng;
 use simple_logger::SimpleLogger;
 use std::{
-    collections::{HashMap, HashSet},
+    collections::HashSet,
     num::NonZeroU32,
     sync::{
         mpsc::{channel, Receiver, Sender},
@@ -158,7 +158,7 @@ fn main() {
                         vx: 0,
                         y: cursor_position.y,
                         vy: 0,
-                        mass: 10,
+                        // mass: 10,
                         color: CONSTS.sand_colors[rng.gen_range(0..2)],
                     }));
 
@@ -218,7 +218,7 @@ struct PhysicsItem {
     y: i32,
     vy: i32,
     color: u32,
-    mass: u8,
+    // mass: u8,
 }
 struct WindowDimensions {
     width: u32,
