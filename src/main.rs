@@ -147,10 +147,26 @@ fn main() {
                 for object in physx_object_reader.iter() {
                     let obj = object.read().unwrap();
 
-                    let index = obj.x as usize + obj.y as usize * window_dim_writer.width as usize;
+                    // Calculate the starting index for the 3x3 space occupied by the object
+                    let start_x = obj.x - 1; // Offset by 1 to center the object
+                    let start_y = obj.y - 1; // Offset by 1 to center the object
 
-                    if index < buffer.len() {
-                        buffer[index] = obj.color;
+                    for i in 0..3 {
+                        for j in 0..3 {
+                            let x = start_x + i;
+                            let y = start_y + j;
+
+                            // Check if the coordinates are within the bounds of the buffer
+                            if x >= 0
+                                && x < window_dim_writer.width as i32
+                                && y >= 0
+                                && y < window_dim_writer.height as i32
+                            {
+                                let index =
+                                    x as usize + y as usize * window_dim_writer.width as usize;
+                                buffer[index] = obj.color;
+                            }
+                        }
                     }
                 }
 
